@@ -42,11 +42,17 @@ volatile unsigned long lastMotorCommand = 0; // Timer to track last motor comman
 volatile uint8_t moving = 0;                 // Flag to indicate if the motors are moving
 
 // PID parameters and variables
-int Kp = 8;
+int Kp = 10;
 int Kd = 2;
 int Ki = 0;
 int Ko = 1;
-int pid;
+
+int Kp2 = 15;
+int Kd2 = 2;
+int Ki2 = 0;
+int Ko2 = 1;
+
+int pid = 0;
 
 volatile long encoder1 = 0, encoder2 = 0;
 volatile int leftPID_Output = 0, rightPID_Output = 0;
@@ -238,7 +244,7 @@ void set_motor_speed(int motor, int speed)
     {
         speed = -255;
     }
-    if (motor == 1)
+    if (motor == 2)
     {
         if (speed >= 0)
         {
@@ -251,7 +257,7 @@ void set_motor_speed(int motor, int speed)
             OCR0A = 255 + speed;        // Set PWM duty cycle
         }
     }
-    else if (motor == 2)
+    else if (motor == 1)
     {
         if (speed >= 0)
         {
@@ -266,7 +272,7 @@ void set_motor_speed(int motor, int speed)
     }
 }
 
-void update_single_encoder(uint8_t channel, uint16_t *adc_value, float *angle, uint8_t *q, uint8_t *preQ, volatile uint32_t *turn_count)
+void update_single_encoder_1(uint8_t channel, uint16_t *adc_value, float *angle, uint8_t *q, uint8_t *preQ, volatile uint32_t *turn_count)
 {
     // Read the ADC value from the specified channel (0 for A0, 1 for A1)
     *adc_value = ADC_read(channel);
@@ -295,10 +301,39 @@ void update_single_encoder(uint8_t channel, uint16_t *adc_value, float *angle, u
     }
 }
 
+void update_single_encoder_2(uint8_t channel, uint16_t *adc_value, float *angle, uint8_t *q, uint8_t *preQ, volatile uint32_t *turn_count)
+{
+    // Read the ADC value from the specified channel (0 for A0, 1 for A1)
+    *adc_value = ADC_read(channel);
+
+    // Adjusted angle calculation based on maximum ADC value 1024
+    *angle = (*adc_value / 1024.0) * 360.0;
+
+    // Determine the quadrant based on the angle
+    if (0 <= *angle && *angle <= 90)
+        *q = 1;
+    else if (90 < *angle && *angle <= 180)
+        *q = 2;
+    else if (180 < *angle && *angle <= 270)
+        *q = 3;
+    else if (270 < *angle && *angle < 360)
+        *q = 4;
+
+    // Check for quadrant transition to update turn count
+    if (*q != *preQ)
+    {
+        if (*q == 1 && *preQ == 4)
+            (*turn_count)--; // Increase turns count
+        if (*q == 4 && *preQ == 1)
+            (*turn_count)++; // Decrease turns count
+        *preQ = *q;          // Update previous quadrant
+    }
+}
+
 void update_encoders()
 {
-    update_single_encoder(0, &adc_value_0, &angle_0, &q_0, &preQ_0, &byte3);
-    update_single_encoder(1, &adc_value_1, &angle_1, &q_1, &preQ_1, &byte4);
+    update_single_encoder_2(1, &adc_value_0, &angle_0, &q_0, &preQ_0, &byte3);
+    update_single_encoder_1(0, &adc_value_1, &angle_1, &q_1, &preQ_1, &byte4);
 }
 
 void resetPID()
@@ -327,10 +362,6 @@ void doPID(int *pid_output, long encoder_count, int target_ticks_per_frame, int 
 
     Perror = target_ticks_per_frame - input;
 
-    if (abs(Perror) < 2)
-    {
-        Perror = 0;
-    }
     output = (Kp * Perror - Kd * (input - *prev_input) + *ITerm) / Ko;
     *prev_encoder = encoder_count;
 
@@ -346,6 +377,29 @@ void doPID(int *pid_output, long encoder_count, int target_ticks_per_frame, int 
     *prev_input = input;
 }
 
+void doPID2(int *pid_output, long encoder_count, int target_ticks_per_frame, int *prev_encoder, int *prev_input, int *ITerm)
+{
+    long Perror;
+    long output;
+    int input = encoder_count - *prev_encoder;
+
+    Perror = target_ticks_per_frame - input;
+
+    output = (Kp2 * Perror - Kd2 * (input - *prev_input) + *ITerm) / Ko2;
+    *prev_encoder = encoder_count;
+
+    output += *pid_output;
+    if (output >= MAX_PWM)
+        output = MAX_PWM;
+    else if (output <= -MAX_PWM)
+        output = -MAX_PWM;
+    else
+        *ITerm += Ki2 * Perror;
+
+    *pid_output = output;
+    *prev_input = input;
+}
+
 void updatePID()
 {
     // Update encoder values (this should reflect the actual current position)
@@ -354,7 +408,7 @@ void updatePID()
 
     // Calculate PID based on the difference between current and target positions
     doPID(&leftPID_Output, encoder1, targetTicksPerFrame1, &left_prev_encoder, &left_prev_input, &left_ITerm);
-    doPID(&rightPID_Output, encoder2, targetTicksPerFrame2, &right_prev_encoder, &right_prev_input, &right_ITerm);
+    doPID2(&rightPID_Output, encoder2, targetTicksPerFrame2, &right_prev_encoder, &right_prev_input, &right_ITerm);
 
     // Set the motor speeds based on PID outputs
     set_motor_speed(1, leftPID_Output);
@@ -397,6 +451,14 @@ int main(void)
             else if (input[0] == 'm')
             {
                 parse_and_set_counts(input + 1); // Parse and set counts
+            }else if (input[0] == 'r')
+            {
+            set_motor_speed(1, 0);
+            set_motor_speed(2, 0);
+            resetPID();
+              pid = 0;
+              byte3 = 0;
+              byte4 = 0;
             }
             else
             {
