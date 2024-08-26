@@ -42,13 +42,13 @@ volatile unsigned long lastMotorCommand = 0; // Timer to track last motor comman
 volatile uint8_t moving = 0;                 // Flag to indicate if the motors are moving
 
 // PID parameters and variables
-int Kp = 10;
-int Kd = 2;
+int Kp = 13;
+int Kd = 7;
 int Ki = 0;
 int Ko = 1;
 
-int Kp2 = 15;
-int Kd2 = 2;
+int Kp2 = 20;
+int Kd2 = 9;
 int Ki2 = 0;
 int Ko2 = 1;
 
